@@ -1,7 +1,7 @@
 # rpw_impl
 Robotics Project Work - Lidar assisted collision avoidance of turtlebot3 burger
 
-## First step is to close the repository to catkin workspace
+## First step is to clone the repository to catkin workspace
 
 Go to following
 > cd ~/catkin_ws/src
@@ -39,4 +39,4 @@ Feel free to edit the existing scripts inside "scripts/" folder and commit the c
 
 ### TODO
 
-The is a need to make lidar_detection.py script to listen to "tb3_1/base_scan" 
+The is a need to make lidar_detection.py script to listen to "tb3_1/base_scan" that is "/scan" in Gazebo simulations. Inspect the points received and run DBSCAN algorithm to classify them to one cluster in the first solution. Next goal is to implement the points as multiple to be avoided.
