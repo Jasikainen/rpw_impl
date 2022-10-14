@@ -6,8 +6,8 @@ Robotics Project Work - Lidar assisted collision avoidance of turtlebot3 burger
 Go to following
 > cd ~/catkin_ws/src
 
-Clone the folder as "mepo700" and go into it and remove .git/ folder
-> git clone https://github.com/Jasikainen/rpw_impl.git
+Clone the folder
+> git clone git@github.com:Jasikainen/rpw_impl.git
 
 ## Next step is to do the following
 
