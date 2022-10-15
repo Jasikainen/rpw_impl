@@ -48,6 +48,7 @@ float32[] intensities    # intensity data [device-specific units].  If your
 # Store here so that they may used after ctrl + C in main
 labels          = 0
 data_points_ext = 0
+objects = {}
 
 def callback(data):
     # Global definitions if these are needed AND changed during execution
@@ -93,6 +94,31 @@ def callback(data):
     #       Calculate wanted points mean value and after this find out the radius of "circle" obstacle at cluster center
     #       2. This point / radius can be used in the main function to be plotted besides the clustered points
 
+    clusters = points_to_clusters(data_points)
+    update_objects(clusters)
+
+
+def points_to_clusters(data_points):
+    clusters = {}
+    for pnt, label in zip(data_points,labels):
+        if label == -1:
+            continue
+        if label in clusters:
+            clusters[label].append(pnt)
+        else:
+            clusters[label] = [pnt]
+    return clusters
+
+
+def update_objects(clusters):
+    global objects
+    objects = {}
+    for label, cluster in clusters.items():
+        center = np.mean(cluster, axis=0)
+        dists = np.linalg.norm(cluster-center, axis=1)
+        radius = np.max(dists)
+        objects[label] = (center, radius)
+
 
 def detect_incoming_lidar_data():
     rospy.init_node('lidar_node', anonymous=True)
@@ -117,7 +143,10 @@ if __name__ == '__main__':
     sns.move_legend(plot, "center right", bbox_to_anchor=(1.0, 1.0), title='Clusters')
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
 
-    
+    # Display the objects as circles
+    for lbl, object in objects.items():
+        obj = plt.Circle(xy=object[0], radius=object[1], color='red', fill=False, label=lbl)
+        plot.add_patch(obj)
 
     plt.title(f"Estimated number of clusters: {n_clusters}")
     plt.show()
