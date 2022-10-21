@@ -3,7 +3,9 @@ import rospy
 from sensor_msgs.msg import LaserScan
 import tf, math
 import numpy as np
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
+from matplotlib.animation import FuncAnimation
 from sklearn.cluster import DBSCAN # LINUX pip install: pip3 install -U scikit-learn
 from sklearn import metrics
 import seaborn as sns
@@ -87,13 +89,6 @@ def callback(data):
     print("Points classified as noise: %d" % n_noise_)
     print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels))
 
-    # TODO: Now as the points are categorized in clusters they belong to
-    #       "collections = Counter(labels)" can be used to check the biggest category of clusters to
-    #       use as single obstacle to be avoid
-    #       1. Iterate over data_points and labels -> to match the points that belong to that cluster
-    #       Calculate wanted points mean value and after this find out the radius of "circle" obstacle at cluster center
-    #       2. This point / radius can be used in the main function to be plotted besides the clustered points
-
     clusters = points_to_clusters(data_points)
     update_objects(clusters)
 
@@ -122,11 +117,54 @@ def update_objects(clusters):
 
 def detect_incoming_lidar_data():
     rospy.init_node('lidar_node', anonymous=True)
-    rospy.Subscriber("/scan", LaserScan, callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
-
+    plot = ObstaclePlot()
+    scan = rospy.Subscriber("/scan", LaserScan, callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
     rospy.loginfo("Started the node")
+
+    ani = FuncAnimation(plot.fig, plot.update_plot)#, init_func=plot.plot_init)
+    plt.show(block=True) 
+
     # spin() simply keeps python from exiting until this node is stopped
     rospy.spin()
+
+
+class ObstaclePlot:
+    def __init__(self,AxisLimits=[-5,5,-5,5]):
+        self.al = AxisLimits
+        self.fig, self.ax = plt.subplots()
+        self.ax.set_aspect('equal')
+        self.ax.set_xlim(self.al[0],self.al[1])
+        self.ax.set_ylim(self.al[2],self.al[3])
+        self.ax.set_xlabel("X")
+        self.ax.set_ylabel("Y", rotation="horizontal")
+        self.ax.plot(0,0, color='gray', marker='o',markersize=10)
+        self.ax.plot(0.4,0, color='gray', marker='>',markersize=4)
+
+
+    def update_plot(self,frame):
+        if len(objects) == 0:
+            return
+        self.clear_patches()
+
+        closest_dist = 1e5
+        closest_obj = Circle(0,0)
+        for lbl, object in objects.items():
+            r = object[1]
+            dist_from_bot = np.linalg.norm(object[0])
+            if r > dist_from_bot: # Inside the approximated circle (-> bad approximation)
+                continue
+            obj = Circle(xy=object[0], radius=r, color='red', fill=False, label=lbl)
+            self.ax.add_patch(obj)
+            if dist_from_bot+r < closest_dist:
+                closest_dist = dist_from_bot+r
+                closest_obj = obj
+        
+        closest_obj.set_fill(True)
+        self.ax.set_title(f"Objects: {len(objects)}, closest: {closest_obj.get_label()}")
+    
+
+    def clear_patches(self):
+        [p.remove() for p in reversed(self.ax.patches)]
 
 
 # Main script is 
