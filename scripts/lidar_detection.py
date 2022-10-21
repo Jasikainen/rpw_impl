@@ -118,7 +118,7 @@ def update_objects(clusters):
 def detect_incoming_lidar_data():
     rospy.init_node('lidar_node', anonymous=True)
     plot = ObstaclePlot()
-    scan = rospy.Subscriber("/scan", LaserScan, plot.scan_callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
+    scan = rospy.Subscriber("/scan", LaserScan, callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
     rospy.loginfo("Started the node")
 
     ani = FuncAnimation(plot.fig, plot.update_plot)#, init_func=plot.plot_init)
@@ -162,12 +162,9 @@ class ObstaclePlot:
         closest_obj.set_fill(True)
         self.ax.set_title(f"Objects: {len(objects)}, closest: {closest_obj.get_label()}")
     
+
     def clear_patches(self):
         [p.remove() for p in reversed(self.ax.patches)]
-
-
-    def scan_callback(self, data):
-        callback(data)
 
 
 # Main script is 
