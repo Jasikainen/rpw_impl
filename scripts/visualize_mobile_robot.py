@@ -15,9 +15,6 @@ class sim_mobile_robot: # Visualizer on 2D plot
         self.ax.set_aspect('equal', adjustable='box', anchor='C')
         plt.tight_layout()
 
-        # Initialize circle patch
-        self.circle_patch = None
-
         # Plot initial value for trajectory and time stamp
         self.traj_pl, = self.ax.plot(0,0, 'b--')
         self.time_txt = self.ax.text(0.78, 0.01, 't = 0 s', color = 'k', fontsize='large', 
@@ -54,8 +51,8 @@ class sim_mobile_robot: # Visualizer on 2D plot
 
     def show_obstacle( self, obstacle_state, radius, rsi2):
         # Draw the obstacle as circle
-        if self.circle_patch is None:
-            self.draw_circle(obstacle_state, radius, rsi2)
+        self.circle_patch = None
+        self.draw_circle(obstacle_state, radius, rsi2)
 
     # PLOT UPDATES, run in every iterations
     #-----------------------------------------------------------------
