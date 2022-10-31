@@ -81,7 +81,7 @@ def callback(data):
     # Currently just for testing purposes using a example from to visualize:
     # https://scikit-learn.org/stable/auto_examples/cluster/plot_dbscan.html
     # Minimum distance between points 
-    db = DBSCAN(eps=0.5, min_samples=5).fit(data_points_ext)
+    db = DBSCAN(eps=0.1, min_samples=5).fit(data_points_ext)
     labels = db.labels_ # Non unique values (e.g. all points)
 
     # Calculate the amount of clusters found excluding noise!
