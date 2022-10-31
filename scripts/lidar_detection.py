@@ -10,6 +10,7 @@ from sklearn.cluster import DBSCAN # LINUX pip install: pip3 install -U scikit-l
 from sklearn import metrics
 import seaborn as sns
 from collections import Counter
+from rpw_impl.msg import ObstacleData, ObstacleArray
 
 """
 THIS MAY BE DELETED LATER ON.
@@ -51,6 +52,8 @@ float32[] intensities    # intensity data [device-specific units].  If your
 labels          = 0
 data_points_ext = 0
 objects = {}
+obstacle_pub = rospy.Publisher("/obstacles", ObstacleArray, queue_size=10)
+SAFE_MARGIN = 0.1
 
 def callback(data):
     # Global definitions if these are needed AND changed during execution
@@ -110,9 +113,24 @@ def update_objects(clusters):
     objects = {}
     for label, cluster in clusters.items():
         center = np.mean(cluster, axis=0)
-        dists = np.linalg.norm(cluster-center, axis=1)
-        radius = np.max(dists)
-        objects[label] = (center, radius)
+        dists_from_center = np.linalg.norm(cluster-center, axis=1)
+        radius = np.max(dists_from_center)
+        distance_from_turtlebot = np.linalg.norm(center)-radius
+        objects[label] = (center, radius, distance_from_turtlebot)
+    publish_obstacles()
+
+
+def publish_obstacles():
+    obstacles = []
+    for label, obj in objects.items():
+        obstacle = ObstacleData()
+        obstacle.name = str(label)
+        obstacle.center = obj[0]
+        obstacle.radius = obj[1]
+        obstacle.distance = obj[2]
+        obstacles.append(obstacle)
+    
+    obstacle_pub.publish(obstacles)
 
 
 def detect_incoming_lidar_data():
@@ -146,6 +164,7 @@ class ObstaclePlot:
             return
         self.clear_patches()
 
+        # TODO: Pick closest objects based on object[2] (distance) instead of calculating here.
         closest_dist = 1e5
         closest_obj = Circle(0,0)
         for lbl, object in objects.items():
@@ -153,12 +172,12 @@ class ObstaclePlot:
             dist_from_bot = np.linalg.norm(object[0])
             if r > dist_from_bot: # Inside the approximated circle (-> bad approximation)
                 continue
-            obj = Circle(xy=object[0], radius=r, color='red', fill=False, label=lbl)
+            obj = Circle(xy=object[0], radius=r+SAFE_MARGIN, color='red', fill=False, label=lbl)
             self.ax.add_patch(obj)
             if dist_from_bot+r < closest_dist:
                 closest_dist = dist_from_bot+r
                 closest_obj = obj
-        
+
         closest_obj.set_fill(True)
         self.ax.set_title(f"Objects: {len(objects)}, closest: {closest_obj.get_label()}")
     
