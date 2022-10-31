@@ -5,15 +5,43 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rpw_impl.msg import ObstacleData, ObstacleArray
 from tf.transformations import euler_from_quaternion
+from enum import Enum
 
 ERROR_MARGIN = 0.1
-GOAL = [2.0,1.0,0.0]
-
+GOAL = [3.0,1.0,0.0]
+MAX_LINEAR_VEL = 0.22 # 0.22 m/s for Turtlebot3 Burger
+MULTIPLE_GOALS = {
+     0: [2.0, 2.0, 0.0], 
+     1: [2.0, 1.0, 0.0],
+     2: [3.5, 1.5, 0.0]}
 
 def get_yaw(orientation):
     (_,_,yaw) = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
     return yaw
 
+class GammaFunctionType(Enum):
+    LINEAR = 1
+    QUADRATIC = 2
+    CUBIC = 3
+
+"""
+Inputs:
+h:              Value calculated based on obstacle shape it's distance between robot
+multiplier :    Coefficient used in calculation
+function_type : Type of gamma function used
+
+Output:
+Value of gamma function computed or 0.0 if function_type not supported (see: GammaFunctionType Enum)
+"""
+def gamma(h, multiplier, function_type):
+    if function_type == GammaFunctionType.LINEAR:
+        return multiplier * h
+    elif function_type == GammaFunctionType.QUADRATIC:
+        return multiplier * h**2
+    elif function_type == GammaFunctionType.CUBIC:
+        return multiplier * h**3
+    return 0.0
+            
 
 class QpController:
     def __init__(self):
@@ -21,68 +49,79 @@ class QpController:
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.update_goal)
         self.obj_sub = rospy.Subscriber('/obstacles', ObstacleArray, self.callback)
-        self.lx = 0.0
-        self.az = 0.0
-        self.goal = GOAL
+        self.linear_x = 0.0
+        self.angular_z = 0.0
+        self.goal_index = 0
+        self.goal = MULTIPLE_GOALS[self.goal_index]
         self.relative_goal = []
-        #self.obstacle_centers = []
-        #self.obstacle_radii = []
-        self.obstacle1_center = []
-        self.obstacle2_center = []
-        self.obstacle1_r = 0.0
-        self.obstacle2_r = 0.0
+        self.obstacle_centers = []
+        self.obstacle_radii = []
         self.safety_margin = 0.1
+        self.gamma_function_type = GammaFunctionType.CUBIC
         rospy.spin()
 
 
     def callback(self,data):
-        self.goal = GOAL
+        self.goal = MULTIPLE_GOALS[self.goal_index]
         obstacles = sorted(data.obstacles, key=lambda d: d.distance)
         if len(obstacles) == 0:
             return
-        """ TODO: Handle N-amount of obstacles
-        for obstacle in obstacles:
-            self.obstacle_centers = [obstacle.center[0],obstacle.center[1]]
-            self.obstacle_radii = obstacle.radius
+        """ 
+        TODO: Handle N-amount of obstacles
         """
-        # For now, we calculate based on the two closest obstacles    
-        self.obstacle1_center = [obstacles[0].center[0],obstacles[0].center[1]]
-        self.obstacle1_r = obstacles[0].radius + self.safety_margin
-        if len(obstacles) >= 2:
-            self.obstacle2_center = [obstacles[1].center[0],obstacles[1].center[1]]
-            self.obstacle2_r = obstacles[1].radius + self.safety_margin
-        else:
-            # Only one obstacle found
-            self.obstacle2_center = [1000,1000]
-            self.obstacle2_r = self.obstacle1_r
+        # Handle multiple obstacles published to the topic ObstacleArray
+        if self.obstacle_centers:
+            self.obstacle_centers.clear()
+        if self.obstacle_radii:
+            self.obstacle_radii.clear()
+
+        for obstacle in obstacles:
+            self.obstacle_centers.append([obstacle.center[0], obstacle.center[1]]) 
+            self.obstacle_radii.append(obstacle.radius + self.safety_margin)
 
         self.solve_twist()
 
 
     def solve_twist(self):
         error_dist = np.linalg.norm(self.relative_goal)
+        # Goal reached, time to change the goal
         if error_dist < ERROR_MARGIN:
             self.pub_twist(True)
+            if self.goal_index < len(MULTIPLE_GOALS) - 1: # Stop updating goal at last available goal
+                self.goal_index += 1
+                self.goal = MULTIPLE_GOALS[self.goal_index]
             return
-        v_0 = 0.22
+
+        print(f"Distance {error_dist:.2f} to relative goal (x,y) = ({self.relative_goal[0]}, {self.relative_goal[1]})")
+
+        v_0 = MAX_LINEAR_VEL
         beta = 3
         k = v_0*(1-np.exp(-beta*error_dist))/error_dist
         u_gtg = k * np.array(self.relative_goal)
 
         # QP-based controller
-        gamma = 0.5
-        l = 0.1 # "Caster wheel" distance from turtle center
+        # -------------------
+        # "Caster wheel" distance from turtle center
+        l = 0.06 
 
         Q_mat = 2 * cvxopt.matrix(np.eye(2), tc='d')
         c_mat = -2 * cvxopt.matrix(u_gtg[:2], tc='d')
 
-        h_o1 = np.linalg.norm(np.array(self.obstacle1_center))**2 - self.obstacle1_r**2
-        h_o2 = np.linalg.norm(np.array(self.obstacle2_center))**2 - self.obstacle2_r**2
-        dh_o1 = -2*np.transpose(np.negative(self.obstacle1_center))
-        dh_o2 = -2*np.transpose(np.negative(self.obstacle2_center))
-        H = np.array([dh_o1, dh_o2])
-        b = gamma*np.array([[h_o1],[h_o2]])
+        # Allocate space based on the number of found obstacles
+        n = len(self.obstacle_centers)
+        H = np.zeros( (n,2) ) # n x 2
+        b = np.zeros( (n,1) ) # n x 1
 
+        for index, (center, radius) in enumerate(zip(self.obstacle_centers, self.obstacle_radii)):
+            # Calculate the gamma(h(x)) and add to b matrix
+            h_obstacle = np.linalg.norm(np.array(center))**2 - radius**2
+            b[index] = gamma(h_obstacle, 10, self.gamma_function_type)
+            # Calculate the rows of H matrix
+            dh_obstacle = -2 * np.transpose(np.negative(center))
+            H[index] = dh_obstacle
+        
+        print(f"H: {np.shape(H)}\nb: {np.shape(b)}:")
+        # Format matrices in suitable type for cvxopt solver
         H_mat = cvxopt.matrix(H, tc='d')
         b_mat = cvxopt.matrix(b, tc='d')
 
@@ -98,9 +137,9 @@ class QpController:
         if abs(theta) > np.pi/2:
             w[0] = -w[0]
         
-        self.lx = v[0]
-        self.az = w[0]
-        print(f"single integrator u: {u[0]:>5.2f}, {u[1]:>5.2f}")
+        self.linear_x = v[0]
+        self.angular_z = w[0]
+        print(f"single integrator ux: {u[0]:>5.2f} uy: {u[1]:>5.2f}")
         print(f"theta: {np.rad2deg(theta):>5.2f} deg")
         self.pub_twist()
 
@@ -110,18 +149,18 @@ class QpController:
         if stop:
             self.cmd_vel_pub.publish(cmd)
             return
-        cmd.linear.x = self.lx
-        cmd.angular.z = self.az
-        if cmd.linear.x > 0.22:
-            cmd.linear.x = 0.22
-        elif cmd.linear.x < -0.22:
-            cmd.linear.x = -0.22
+        cmd.linear.x = self.linear_x
+        cmd.angular.z = self.angular_z
+        if cmd.linear.x > MAX_LINEAR_VEL:
+            cmd.linear.x = MAX_LINEAR_VEL
+        elif cmd.linear.x < -MAX_LINEAR_VEL:
+            cmd.linear.x = -MAX_LINEAR_VEL
         if cmd.angular.z > 1:
             cmd.angular.z = 1
         elif cmd.angular.z < -1:
             cmd.angular.z = -1
 
-        print(f"\nX: {cmd.linear.x:.2f}, Z: {cmd.angular.z:.2f}")
+        print(f"\n{'Velocity':.^20} \nLinear: {cmd.linear.x:.2f} Angular: {cmd.angular.z:.2f}")
         self.cmd_vel_pub.publish(cmd)
 
     
@@ -133,7 +172,6 @@ class QpController:
         goal_delta = np.subtract(self.goal[:2],current_pose)
         inv_rot_matrix = np.array([[np.cos(yaw),np.sin(yaw)],[-np.sin(yaw),np.cos(yaw)]])
         self.relative_goal = inv_rot_matrix @ np.array(goal_delta)
-
 
 if __name__ == '__main__':
     controller = QpController()
