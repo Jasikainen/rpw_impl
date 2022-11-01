@@ -11,9 +11,10 @@ ERROR_MARGIN = 0.1
 GOAL = [3.0,1.0,0.0]
 MAX_LINEAR_VEL = 0.22 # 0.22 m/s for Turtlebot3 Burger
 MULTIPLE_GOALS = {
-     0: [2.0, 2.0, 0.0], 
-     1: [2.0, 1.0, 0.0],
-     2: [3.5, 1.5, 0.0]}
+     0: [0.0, -1.6, 0.0], 
+     1: [1.5, 0.5, 0.0],
+     2: [-2.0, 0.5, 0.0],
+     3: [-2.0, -0.5, 0.0]}
 
 def get_yaw(orientation):
     (_,_,yaw) = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
@@ -66,9 +67,7 @@ class QpController:
         obstacles = sorted(data.obstacles, key=lambda d: d.distance)
         if len(obstacles) == 0:
             return
-        """ 
-        TODO: Handle N-amount of obstacles
-        """
+
         # Handle multiple obstacles published to the topic ObstacleArray
         if self.obstacle_centers:
             self.obstacle_centers.clear()
