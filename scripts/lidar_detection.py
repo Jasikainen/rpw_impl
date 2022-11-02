@@ -54,6 +54,7 @@ data_points_ext = 0
 objects = {}
 obstacle_pub = rospy.Publisher("/obstacles", ObstacleArray, queue_size=10)
 SAFE_MARGIN = 0.1
+MAX_RADIUS = 0.3
 
 def callback(data):
     # Global definitions if these are needed AND changed during execution
@@ -81,6 +82,9 @@ def callback(data):
     # Currently just for testing purposes using a example from to visualize:
     # https://scikit-learn.org/stable/auto_examples/cluster/plot_dbscan.html
     # Minimum distance between points 
+    if data_points_ext.size == 0:
+        update_objects({})
+        return
     db = DBSCAN(eps=0.1, min_samples=5).fit(data_points_ext)
     labels = db.labels_ # Non unique values (e.g. all points)
 
@@ -102,20 +106,41 @@ def points_to_clusters(data_points):
         if label == -1:
             continue
         if label in clusters:
-            clusters[label].append(pnt)
+            clusters[label][0].append(pnt[0])
+            clusters[label][1].append(pnt[1])
         else:
-            clusters[label] = [pnt]
+            clusters[label] = ([pnt[0]],[pnt[1]])
     return clusters
+
+
+def fit_circle(x, y):  
+    A = np.array([x, y, np.ones(len(x))]).T
+    b = np.array(x)**2 + np.array(y)**2
+    c = np.linalg.lstsq(A,b,rcond=None)[0]
+    xc = c[0]/2
+    yc = c[1]/2
+    r = np.sqrt(c[2] + xc**2 + yc**2)
+    return [xc, yc], r
+
+
+def better_estimate_for_large_clusters(cluster, radius):
+    pnt_distances = np.linalg.norm(cluster, axis=0)
+    closest_pnt_i = np.argmin(pnt_distances)
+    closest_pnt = [cluster[0][closest_pnt_i], cluster[1][closest_pnt_i]]
+    closest_pnt_unit = closest_pnt/pnt_distances[closest_pnt_i]
+    center = closest_pnt + closest_pnt_unit*(radius-SAFE_MARGIN)
+    return center
 
 
 def update_objects(clusters):
     global objects
     objects = {}
     for label, cluster in clusters.items():
-        center = np.mean(cluster, axis=0)
-        dists_from_center = np.linalg.norm(cluster-center, axis=1)
-        radius = np.max(dists_from_center)
-        distance_from_turtlebot = np.linalg.norm(center)-radius
+        center, radius = fit_circle(cluster[0],cluster[1])
+        if radius > MAX_RADIUS: # Temporarily use this to reduce effect of large objects
+            center = better_estimate_for_large_clusters(cluster, radius)
+        center_distance = np.linalg.norm(center)
+        distance_from_turtlebot = center_distance - radius
         objects[label] = (center, radius, distance_from_turtlebot)
     publish_obstacles()
 
@@ -147,7 +172,7 @@ def detect_incoming_lidar_data():
 
 
 class ObstaclePlot:
-    def __init__(self,AxisLimits=[-5,5,-5,5]):
+    def __init__(self,AxisLimits=[-3,3,-3,3]):
         self.al = AxisLimits
         self.fig, self.ax = plt.subplots()
         self.ax.set_aspect('equal')
@@ -156,7 +181,7 @@ class ObstaclePlot:
         self.ax.set_xlabel("X")
         self.ax.set_ylabel("Y", rotation="horizontal")
         self.ax.plot(0,0, color='gray', marker='o',markersize=10)
-        self.ax.plot(0.4,0, color='gray', marker='>',markersize=4)
+        self.ax.plot(0.2,0, color='gray', marker='>',markersize=4)
 
 
     def update_plot(self,frame):
@@ -164,23 +189,14 @@ class ObstaclePlot:
             return
         self.clear_patches()
 
-        # TODO: Pick closest objects based on object[2] (distance) instead of calculating here.
-        closest_dist = 1e5
-        closest_obj = Circle(0,0)
-        for lbl, object in objects.items():
+        for lbl, object in sorted(objects.items(),key=lambda d: d[1][2]):
+            center = object[0]
             r = object[1]
-            dist_from_bot = np.linalg.norm(object[0])
-            if r > dist_from_bot: # Inside the approximated circle (-> bad approximation)
-                continue
-            obj = Circle(xy=object[0], radius=r+SAFE_MARGIN, color='red', fill=False, label=lbl)
+            # distance = object[2]
+            obj = Circle(xy=center, radius=r, color='gray', fill=True, label=lbl)
+            safe_margin = Circle(xy=center, radius=r+SAFE_MARGIN, color='red', fill=False)
             self.ax.add_patch(obj)
-            if dist_from_bot+r < closest_dist:
-                closest_dist = dist_from_bot+r
-                closest_obj = obj
-
-        closest_obj.set_fill(True)
-        self.ax.set_title(f"Objects: {len(objects)}, closest: {closest_obj.get_label()}")
-    
+            self.ax.add_patch(safe_margin)
 
     def clear_patches(self):
         [p.remove() for p in reversed(self.ax.patches)]
@@ -197,15 +213,16 @@ if __name__ == '__main__':
     plot = sns.scatterplot(data=data_points_ext, x=data_points_ext[:, 0], y=data_points_ext[:, 1], 
         hue=labels, legend="full", palette="deep")
 
-    sns.move_legend(plot, "center right", bbox_to_anchor=(1.0, 1.0), title='Clusters')
+    sns.move_legend(plot, "upper left", bbox_to_anchor=(1.0, 1.0), title='Clusters')
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
 
     # Display the objects as circles
     for lbl, object in objects.items():
-        obj = plt.Circle(xy=object[0], radius=object[1], color='red', fill=False, label=lbl)
+        obj = Circle(xy=object[0], radius=object[1], color='red', fill=False, label=lbl)
         plot.add_patch(obj)
 
     plt.title(f"Estimated number of clusters: {n_clusters}")
+    plt.gca().set_aspect('equal')
     plt.show()
 
     
