@@ -7,15 +7,18 @@ from rpw_impl.msg import ObstacleData, ObstacleArray
 from tf.transformations import euler_from_quaternion
 from enum import Enum
 
+TOPIC_PREFIX = "" # "/tb3_1"
 ERROR_MARGIN = 0.1
 GOAL = [3.0,1.0,0.0]
 MAX_LINEAR_VEL = 0.22 # 0.22 m/s for Turtlebot3 Burger
+MAX_LINEAR_VEL_REVERSE = 0.11
 MULTIPLE_GOALS = {
-     0: [0.0, -1.6, 0.0], 
-     1: [1.5, 0.5, 0.0],
-     2: [-2.0, 0.5, 0.0],
-     3: [-2.0, -0.5, 0.0]}
-
+     0: [0.0, 1.0, 0.0], 
+     1: [0.0, 1.0, 0.0],
+     2: [0.0, 1,0, 0.0],
+     3: [0.0, 1.0, 0.0],
+     4: [0.0, 1,0, 0.0],
+     5: [0.0, 1.0, 0.0]}
 def get_yaw(orientation):
     (_,_,yaw) = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
     return yaw
@@ -47,14 +50,16 @@ def gamma(h, multiplier, function_type):
 class QpController:
     def __init__(self):
         rospy.init_node('turtlebot_controller')
-        self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-        self.odom_sub = rospy.Subscriber('/odom', Odometry, self.update_goal)
+        self.cmd_vel_pub = rospy.Publisher(f'{TOPIC_PREFIX}/cmd_vel', Twist, queue_size=10)
+        self.odom_sub = rospy.Subscriber(f'{TOPIC_PREFIX}/odom', Odometry, self.update_goal)
         self.obj_sub = rospy.Subscriber('/obstacles', ObstacleArray, self.callback)
         self.linear_x = 0.0
         self.angular_z = 0.0
         self.goal_index = 0
         self.goal = MULTIPLE_GOALS[self.goal_index]
-        self.relative_goal = []
+        self.update_counter = 0
+        self.transform_goal = True
+        self.relative_goal = [0.0, 0.0]
         self.obstacle_centers = []
         self.obstacle_radii = []
         self.safety_margin = 0.1
@@ -63,16 +68,14 @@ class QpController:
 
 
     def callback(self,data):
-        self.goal = MULTIPLE_GOALS[self.goal_index]
         obstacles = sorted(data.obstacles, key=lambda d: d.distance)
-        if len(obstacles) == 0:
-            return
+        if len(obstacles) > 0:
 
-        # Handle multiple obstacles published to the topic ObstacleArray
-        if self.obstacle_centers:
-            self.obstacle_centers.clear()
-        if self.obstacle_radii:
-            self.obstacle_radii.clear()
+            # Handle multiple obstacles published to the topic ObstacleArray
+            if self.obstacle_centers:
+                self.obstacle_centers.clear()
+            if self.obstacle_radii:
+                self.obstacle_radii.clear()
 
         for obstacle in obstacles:
             self.obstacle_centers.append([obstacle.center[0], obstacle.center[1]]) 
@@ -85,13 +88,15 @@ class QpController:
         error_dist = np.linalg.norm(self.relative_goal)
         # Goal reached, time to change the goal
         if error_dist < ERROR_MARGIN:
-            self.pub_twist(True)
             if self.goal_index < len(MULTIPLE_GOALS) - 1: # Stop updating goal at last available goal
                 self.goal_index += 1
                 self.goal = MULTIPLE_GOALS[self.goal_index]
-            return
+                self.transform_goal = True
+            else:
+                self.pub_twist(True)
+                return
 
-        print(f"Distance {error_dist:.2f} to relative goal (x,y) = ({self.relative_goal[0]}, {self.relative_goal[1]})")
+        print(f"\nDistance {error_dist:5.2f} to relative goal (x,y) = ({self.relative_goal[0]:5.2f}, {self.relative_goal[1]:5.2f})", end="")
 
         v_0 = MAX_LINEAR_VEL
         beta = 3
@@ -101,7 +106,7 @@ class QpController:
         # QP-based controller
         # -------------------
         # "Caster wheel" distance from turtle center
-        l = 0.06 
+        l = 0.06
 
         Q_mat = 2 * cvxopt.matrix(np.eye(2), tc='d')
         c_mat = -2 * cvxopt.matrix(u_gtg[:2], tc='d')
@@ -119,7 +124,6 @@ class QpController:
             dh_obstacle = -2 * np.transpose(np.negative(center))
             H[index] = dh_obstacle
         
-        print(f"H: {np.shape(H)}\nb: {np.shape(b)}:")
         # Format matrices in suitable type for cvxopt solver
         H_mat = cvxopt.matrix(H, tc='d')
         b_mat = cvxopt.matrix(b, tc='d')
@@ -138,8 +142,8 @@ class QpController:
         
         self.linear_x = v[0]
         self.angular_z = w[0]
-        print(f"single integrator ux: {u[0]:>5.2f} uy: {u[1]:>5.2f}")
-        print(f"theta: {np.rad2deg(theta):>5.2f} deg")
+        #print(f"single integrator ux: {u[0]:>5.2f} uy: {u[1]:>5.2f}")
+        #print(f"theta: {np.rad2deg(theta):>5.2f} deg")
         self.pub_twist()
 
 
@@ -152,25 +156,39 @@ class QpController:
         cmd.angular.z = self.angular_z
         if cmd.linear.x > MAX_LINEAR_VEL:
             cmd.linear.x = MAX_LINEAR_VEL
-        elif cmd.linear.x < -MAX_LINEAR_VEL:
-            cmd.linear.x = -MAX_LINEAR_VEL
+        elif cmd.linear.x < -MAX_LINEAR_VEL_REVERSE:
+            cmd.linear.x = -MAX_LINEAR_VEL_REVERSE
         if cmd.angular.z > 1:
             cmd.angular.z = 1
         elif cmd.angular.z < -1:
             cmd.angular.z = -1
 
-        print(f"\n{'Velocity':.^20} \nLinear: {cmd.linear.x:.2f} Angular: {cmd.angular.z:.2f}")
+        #print(f"\n{'Velocity':.^20} \nLinear: {cmd.linear.x:.2f} Angular: {cmd.angular.z:.2f}")
         self.cmd_vel_pub.publish(cmd)
 
     
     def update_goal(self,data):
+        yaw = get_yaw(data.pose.pose.orientation)
         posx = data.pose.pose.position.x
         posy = data.pose.pose.position.y
-        yaw = get_yaw(data.pose.pose.orientation)
-        current_pose = np.array([posx,posy])
-        goal_delta = np.subtract(self.goal[:2],current_pose)
-        inv_rot_matrix = np.array([[np.cos(yaw),np.sin(yaw)],[-np.sin(yaw),np.cos(yaw)]])
-        self.relative_goal = inv_rot_matrix @ np.array(goal_delta)
+        tr_2d = np.array([[np.cos(yaw), -np.sin(yaw), posx],
+                            [np.sin(yaw,), np.cos(yaw), posy],
+                            [0           , 0          , 1   ]])
+
+        if self.transform_goal:
+            self.goal = tr_2d @ [self.goal[0], self.goal[1], 1]
+            self.transform_goal = False
+            print(f'\n\n--- GOAL {self.goal_index}: ({MULTIPLE_GOALS[self.goal_index][0]}, {MULTIPLE_GOALS[self.goal_index][1]}) ---')
+        
+        self.update_counter += 1
+        if self.update_counter % 10 == 0:
+            print(f'  |  /odom {posx:6.2f}, {posy:6.2f}, {np.rad2deg(yaw):7.2f} deg  |  Current goal: {self.goal[0]:6.2f}, {self.goal[1]:6.2f}', end="\r")
+
+        tr_inv = np.linalg.inv(tr_2d)
+            
+        goal_delta = tr_inv @ self.goal
+        self.relative_goal = goal_delta[:2]
+
 
 if __name__ == '__main__':
     controller = QpController()

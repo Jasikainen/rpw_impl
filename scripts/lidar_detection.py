@@ -48,13 +48,16 @@ float32[] intensities    # intensity data [device-specific units].  If your
                          # the array empty.
 """
 
+TOPIC_PREFIX = "" # /tb3_1
+SAFE_MARGIN = 0.1
+MAX_RADIUS = 0.3
+
 # Store here so that they may used after ctrl + C in main
 labels          = 0
 data_points_ext = 0
 objects = {}
 obstacle_pub = rospy.Publisher("/obstacles", ObstacleArray, queue_size=10)
-SAFE_MARGIN = 0.1
-MAX_RADIUS = 0.3
+
 
 def callback(data):
     # Global definitions if these are needed AND changed during execution
@@ -94,7 +97,8 @@ def callback(data):
     n_noise_ = list(labels).count(-1)
     print("Clusters found: %d" % n_clusters_)
     print("Points classified as noise: %d" % n_noise_)
-    print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels))
+    if n_clusters_ >= 2:
+        print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels))
 
     clusters = points_to_clusters(data_points)
     update_objects(clusters)
@@ -161,7 +165,7 @@ def publish_obstacles():
 def detect_incoming_lidar_data():
     rospy.init_node('lidar_node', anonymous=True)
     plot = ObstaclePlot()
-    scan = rospy.Subscriber("/scan", LaserScan, callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
+    scan = rospy.Subscriber(TOPIC_PREFIX+"/scan", LaserScan, callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
     rospy.loginfo("Started the node")
 
     ani = FuncAnimation(plot.fig, plot.update_plot)#, init_func=plot.plot_init)
