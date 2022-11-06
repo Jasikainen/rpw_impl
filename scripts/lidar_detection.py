@@ -50,7 +50,8 @@ float32[] intensities    # intensity data [device-specific units].  If your
 
 TOPIC_PREFIX = "" # /tb3_1
 SAFE_MARGIN = 0.1
-MAX_RADIUS = 0.3
+MAX_RADIUS = 0.5
+PLOT_OBSTACLES = False
 
 # Store here so that they may used after ctrl + C in main
 labels          = 0
@@ -88,7 +89,7 @@ def callback(data):
     if data_points_ext.size == 0:
         update_objects({})
         return
-    db = DBSCAN(eps=0.1, min_samples=5).fit(data_points_ext)
+    db = DBSCAN(eps=0.2, min_samples=5).fit(data_points_ext)
     labels = db.labels_ # Non unique values (e.g. all points)
 
     # Calculate the amount of clusters found excluding noise!
@@ -162,14 +163,15 @@ def publish_obstacles():
     obstacle_pub.publish(obstacles)
 
 
-def detect_incoming_lidar_data():
+def detect_incoming_lidar_data(create_plot=False):
     rospy.init_node('lidar_node', anonymous=True)
-    plot = ObstaclePlot()
     scan = rospy.Subscriber(TOPIC_PREFIX+"/scan", LaserScan, callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
     rospy.loginfo("Started the node")
 
-    ani = FuncAnimation(plot.fig, plot.update_plot)#, init_func=plot.plot_init)
-    plt.show(block=True) 
+    if create_plot:
+        plot = ObstaclePlot()
+        ani = FuncAnimation(plot.fig, plot.update_plot)#, init_func=plot.plot_init)
+        plt.show(block=True) 
 
     # spin() simply keeps python from exiting until this node is stopped
     rospy.spin()
@@ -208,7 +210,7 @@ class ObstaclePlot:
 
 # Main script is 
 if __name__ == '__main__':
-    detect_incoming_lidar_data()
+    detect_incoming_lidar_data(PLOT_OBSTACLES)
     print(f'program ended by user action: CTRL + C')
 
     print(f"Collections of the found clusters:\n{Counter(labels)}")
