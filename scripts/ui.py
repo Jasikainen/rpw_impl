@@ -10,7 +10,7 @@ from geometry_msgs.msg import Point
 from _tkinter import TclError
 
 
-TOPIC_PREFIX = ""
+TOPIC_PREFIX = ""#"/tb3_1"
 DRAW_ESTIMATED_OBSTACLES = True
 UPDATE_RATE = 0.001
 
@@ -52,7 +52,7 @@ class TurtlebotUI:
         self.clear_plot()
 
         # Plot lidar data points
-        self.scatter = self.ax.scatter(scan_points[0],scan_points[1],s=1.0,c="Red")
+        self.scatter = self.ax.scatter(scan_points[0],scan_points[1],s=10.0,c="Red")
 
         # Plot estimated obstacles
         if plot_obstacles:
@@ -103,12 +103,14 @@ def callback_goal(data):
 
 
 def on_click(event):
-    if event.button is mb.LEFT:
-        if event.inaxes:
-            goal = Point()
+    goal = Point()
+    if event.inaxes:
+        if event.button is mb.LEFT:
             goal.x = event.xdata
             goal.y = event.ydata
             goal.z = 0.0
+            goal_pub.publish(goal)
+        elif event.button is mb.RIGHT:
             goal_pub.publish(goal)
 
 
