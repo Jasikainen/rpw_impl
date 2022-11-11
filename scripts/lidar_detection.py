@@ -48,7 +48,7 @@ float32[] intensities    # intensity data [device-specific units].  If your
                          # the array empty.
 """
 
-TOPIC_PREFIX = "" # /tb3_1
+TOPIC_PREFIX = ""#"/tb3_1"
 SAFE_MARGIN = 0.1
 MAX_RADIUS = 0.5
 PLOT_OBSTACLES = False
@@ -108,8 +108,6 @@ def callback(data):
 def points_to_clusters(data_points):
     clusters = {}
     for pnt, label in zip(data_points,labels):
-        if label == -1:
-            continue
         if label in clusters:
             clusters[label][0].append(pnt[0])
             clusters[label][1].append(pnt[1])
@@ -119,6 +117,13 @@ def points_to_clusters(data_points):
 
 
 def fit_circle(x, y):  
+    if len(x) == 1:
+        return [x[0], y[0]], 0.05
+    if len(x) == 2:
+        xc = np.mean(x)
+        yc = np.mean(y)
+        r = np.linalg.norm([x[1]-x[0], y[1]-y[0]])/2
+        return [xc, yc], r
     A = np.array([x, y, np.ones(len(x))]).T
     b = np.array(x)**2 + np.array(y)**2
     c = np.linalg.lstsq(A,b,rcond=None)[0]
@@ -141,12 +146,18 @@ def update_objects(clusters):
     global objects
     objects = {}
     for label, cluster in clusters.items():
-        center, radius = fit_circle(cluster[0],cluster[1])
-        if radius > MAX_RADIUS: # Temporarily use this to reduce effect of large objects
-            center = better_estimate_for_large_clusters(cluster, radius)
-        center_distance = np.linalg.norm(center)
-        distance_from_turtlebot = center_distance - radius
-        objects[label] = (center, radius, distance_from_turtlebot)
+        if label == -1:
+            pnt_distances = np.linalg.norm(cluster, axis=0)
+            closest_pnt_i = np.argmin(pnt_distances)
+            closest_pnt = [cluster[0][closest_pnt_i], cluster[1][closest_pnt_i]]
+            objects[label] = (closest_pnt,0.05,pnt_distances[closest_pnt_i],0.05)
+        else:
+            center, radius = fit_circle(cluster[0],cluster[1])
+            if radius > MAX_RADIUS: # Temporarily use this to reduce effect of large objects
+                center = better_estimate_for_large_clusters(cluster, radius)
+            center_distance = np.linalg.norm(center)
+            distance_from_turtlebot = center_distance - radius
+            objects[label] = (center, radius, distance_from_turtlebot)
     publish_obstacles()
 
 
