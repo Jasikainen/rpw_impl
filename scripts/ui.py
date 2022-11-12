@@ -3,14 +3,14 @@ import time
 from sensor_msgs.msg import LaserScan
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle, FancyArrow
+from matplotlib.patches import Circle, FancyArrow, Polygon
 from matplotlib.backend_bases import MouseButton as mb
 from rpw_impl.msg import ObstacleData, ObstacleArray
 from geometry_msgs.msg import Point
 from _tkinter import TclError
 
 
-TOPIC_PREFIX = ""
+TOPIC_PREFIX = ""#"/tb3_1"
 DRAW_ESTIMATED_OBSTACLES = True
 UPDATE_RATE = 0.001
 
@@ -22,7 +22,7 @@ goal_pub = rospy.Publisher("/new_goal", Point, queue_size=10)
 
 
 class TurtlebotUI:
-    def __init__(self,AxisLimits=[-3,3,-3,3]):
+    def __init__(self,AxisLimits=[-3,3,-2,2]):
         plt.ion()
         self.al = AxisLimits
         self.fig = plt.figure(num="Turtlebot UI", facecolor="Black",figsize=[8.0,8.0])
@@ -30,46 +30,67 @@ class TurtlebotUI:
         self.ax = self.fig.gca()
         self.ax.set_aspect('equal')
         self.ax.set_facecolor("Black")
-        self.ax.tick_params(colors="Black")
+        self.ax.set_xticks([])
+        self.ax.set_yticks([])
         self.ax.set_xlim(self.al[0],self.al[1])
         self.ax.set_ylim(self.al[2],self.al[3])
-        self.ax.set_xlabel("X (m)")
         for spine in self.ax.spines.values():
             spine.set_edgecolor('gray')
-        self.ax.set_ylabel("Y (m)", rotation="horizontal")
-        self.ax.plot(0,0, color='gray', marker='o',markersize=20)
-        self.ax.plot(0.2,0, color='gray', marker='>',markersize=6)
-        self.scatter = self.ax.scatter(scan_points[0],scan_points[1],c="Red")
-        self.objects = []
+
+        self.draw_turtlebot()
+        self.dynamic_objects = []
+
+    def draw_turtlebot(self):
+        turtleBodyPts = [(.04,.08),(-.04,.08),(-.08,.04),(-.08,-.04),(-.04,-.08),(.04,-.08)]
+        turtleLidarSensorPts = [(-.03,.03),(-.03,-.03),(.05,-.01),(.05,.01)]
+        turtleLeftWheelPts = [(.04,.08),(.04,.1),(0,.1),(0,.08)]
+        turtleRightWheelPts = [(.04,-.08),(.04,-.1),(0,-.1),(0,-.08)]
+        turtleBody = Polygon(turtleBodyPts,closed=True, color="gray", fill=True, zorder=100)
+        turtleLidarSensor = Polygon(turtleLidarSensorPts, color=(.1,.1,.1), fill=True, zorder=101)
+        turtleLeftWheel = Polygon(turtleLeftWheelPts,closed=True,color="gray",fill=False,zorder=102)
+        turtleRightWheel = Polygon(turtleRightWheelPts,closed=True,color="gray",fill=False,zorder=103)
+        turtlePointAhead = Circle((0.06,0),radius=0.02,color="white",fill=True,zorder=104)
+        self.ax.add_patch(turtleBody)
+        self.ax.add_patch(turtleLidarSensor)
+        self.ax.add_patch(turtleLeftWheel)
+        self.ax.add_patch(turtleRightWheel)
+        self.ax.add_patch(turtlePointAhead)
 
     def refresh(self):
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
+        [p.remove() for p in self.dynamic_objects]
+        self.dynamic_objects = []
 
     def update_plot(self, plot_obstacles=False):
-        if not self.ax:
-            print("yay")
-        self.clear_plot()
-
         # Plot lidar data points
-        self.scatter = self.ax.scatter(scan_points[0],scan_points[1],s=1.0,c="Red")
+        scatter = self.ax.scatter(scan_points[0],scan_points[1],s=10.0,c="Red")
+        self.dynamic_objects.append(scatter)
 
         # Plot estimated obstacles
         if plot_obstacles:
             for obstacle in obstacles:
-                circle = Circle(xy=obstacle.center, radius=obstacle.radius, color="Red",fill=True,alpha=0.1)
-                self.ax.add_patch(circle)
+                circle = Circle(xy=obstacle.center, radius=obstacle.radius, color="Red",fill=True,alpha=0.1, zorder=0)
+                if obstacle.name == "-1":
+                    # Closest point from the "noise" cluster
+                    circle.set_color("yellow")
+                    circle.set_alpha(.4)
+                obj = self.ax.add_patch(circle)
+                self.dynamic_objects.append(obj)
 
         # Plot goal
-        goal = FancyArrow(0,0,relative_goal[0],relative_goal[1],width=.03,
-                            length_includes_head=True, color="Yellow", alpha=.25)
-        self.ax.add_patch(goal)
+        distance_to_goal = np.linalg.norm(relative_goal)
+        if distance_to_goal > 0.1:
+            l = 0.06
+            goal = FancyArrow(l,0,relative_goal[0]-l,relative_goal[1],width=.03, linewidth=0,
+                                length_includes_head=True, color="Yellow", alpha=.25, zorder=1)
+            arrow = self.ax.add_patch(goal)
+            self.dynamic_objects.append(arrow)
+            self.ax.set_title(f"Distance to goal: {distance_to_goal:.2f} meters", color="gray")
+        else:
+            self.ax.set_title(" ",color="black")
 
         self.refresh()
-
-    def clear_plot(self):
-        [p.remove() for p in reversed(self.ax.patches)]
-        self.scatter.remove()
 
 
 def callback_scan(data):
@@ -103,12 +124,14 @@ def callback_goal(data):
 
 
 def on_click(event):
-    if event.button is mb.LEFT:
-        if event.inaxes:
-            goal = Point()
+    goal = Point()
+    if event.inaxes:
+        if event.button is mb.LEFT:
             goal.x = event.xdata
             goal.y = event.ydata
             goal.z = 0.0
+            goal_pub.publish(goal)
+        elif event.button is mb.RIGHT:
             goal_pub.publish(goal)
 
 

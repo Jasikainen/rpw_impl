@@ -28,17 +28,14 @@ To start off experimenting launch premade gazebo world
 Start Rviz visualizer
 > roslaunch turtlebot3_gazebo turtlebot3_gazebo_rviz.launch
 
-Run from the repository the specific script
+Run from the repository the specific scripts
 > rosrun rpw_impl lidar_detection.py
 
-To move the turtlebot3 burger if necessary (real world turtlebot3 will not rely on these specific inputs)
-> roslaunch turtlebot3_teleop turtlebot3_teleop_key.launch
+The controller and the ui nodes can be run similarly
+> rosrun rpw_impl controller.py
+
+> rosrun rpw_impl ui.py
+
 ### Add new scripts and/or edit the existing
 
 Feel free to edit the existing scripts inside "scripts/" folder and commit the changes to repository
-
-### TODO
-
-The is a need to make lidar_detection.py script to listen to "tb3_1/base_scan" that is "/scan" in Gazebo simulations. Inspect the points received and run DBSCAN algorithm to classify them to one cluster in the first solution. Next goal is to implement the points as multiple to be avoided.
-
-lidar_detection.py doesn't work if it doesn't see at least two obstacles.

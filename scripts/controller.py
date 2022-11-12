@@ -7,14 +7,12 @@ from rpw_impl.msg import ObstacleData, ObstacleArray
 from tf.transformations import euler_from_quaternion
 from enum import Enum
 
-TOPIC_PREFIX = "" # "/tb3_1"
+TOPIC_PREFIX = ""#"/tb3_1"
 ERROR_MARGIN = 0.1
-SAFETY_MARGIN = 0.1
-MAX_LINEAR_VEL = 0.22 # 0.22 m/s for Turtlebot3 Burger
-MAX_LINEAR_VEL_REVERSE = 0.01
-MAX_ANGULAR_VEL = 0.6
-MAX_ANGULAR_VEL_REVERSE = 1.0
-ANGULAR_GAIN = 0.5
+SAFETY_MARGIN = 0.3
+MAX_LINEAR_VEL = 0.21 # 0.22 m/s for Turtlebot3 Burger
+MAX_LINEAR_VEL_REVERSE = 0.21
+MAX_ANGULAR_VEL = 2.0
 
 
 def get_yaw(orientation):
@@ -63,7 +61,7 @@ class QpController:
         self.obstacle_centers = []
         self.obstacle_radii = []
         self.safety_margin = SAFETY_MARGIN
-        self.gamma_function_type = GammaFunctionType.CUBIC
+        self.gamma_function_type = GammaFunctionType.QUADRATIC
         rospy.spin()
 
 
@@ -88,7 +86,7 @@ class QpController:
         error_dist = np.linalg.norm(self.relative_goal)
         
         # Goal reached
-        if error_dist < ERROR_MARGIN:
+        if error_dist <= ERROR_MARGIN:
             self.pub_twist(True) # Stop robot
             return
 
@@ -128,16 +126,10 @@ class QpController:
         sol = cvxopt.solvers.qp(Q_mat, c_mat, H_mat, b_mat, verbose=False)
 
         u = np.array([sol['x'][0], sol['x'][1], 0])
-        theta = np.arctan2(u[1],u[0])
-        A = np.array([[1,0], [0,1/l]]) @ np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
-        [v, w] = A @ np.array([[u[0]],[u[1]]]) # Using the data from the omnidirectional case
-        
-        # Quick fix for turtle stuck going towards +-180 deg
-        if abs(theta) > np.pi/2:
-            w[0] = -w[0]
+        [v, w] = np.array([[u[0]],[u[1]/l]]) # Using the data from the omnidirectional case
         
         self.linear_x = v[0]
-        self.angular_z = w[0] * ANGULAR_GAIN
+        self.angular_z = w[0]
         #print(f"single integrator ux: {u[0]:>5.2f} uy: {u[1]:>5.2f}")
         #print(f"theta: {np.rad2deg(theta):>5.2f} deg")
         self.pub_twist()
@@ -155,18 +147,10 @@ class QpController:
             cmd.linear.x = MAX_LINEAR_VEL
         elif cmd.linear.x < -MAX_LINEAR_VEL_REVERSE:
             cmd.linear.x = -MAX_LINEAR_VEL_REVERSE
-
-        if cmd.linear.x > 0:
-            if cmd.angular.z > MAX_ANGULAR_VEL:
-                cmd.angular.z = MAX_ANGULAR_VEL
-            elif cmd.angular.z < -MAX_ANGULAR_VEL:
-                cmd.angular.z = -MAX_ANGULAR_VEL
-        else:
-            if cmd.angular.z > MAX_ANGULAR_VEL_REVERSE:
-                cmd.angular.z = MAX_ANGULAR_VEL_REVERSE
-            elif cmd.angular.z < -MAX_ANGULAR_VEL_REVERSE:
-                cmd.angular.z = -MAX_ANGULAR_VEL_REVERSE
-
+        if cmd.angular.z > MAX_ANGULAR_VEL:
+            cmd.angular.z = MAX_ANGULAR_VEL
+        elif cmd.angular.z < -MAX_ANGULAR_VEL:
+            cmd.angular.z = -MAX_ANGULAR_VEL
         #print(f"\n{'Velocity':.^20} \nLinear: {cmd.linear.x:.2f} Angular: {cmd.angular.z:.2f}")
         self.cmd_vel_pub.publish(cmd)
 
