@@ -52,6 +52,7 @@ add_message_files(
    FILES
    ObstacleData.msg
    ObstacleArray.msg
+   SIControlOutput.msg
 )
 
 ## Generate services in the 'srv' folder

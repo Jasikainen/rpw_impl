@@ -1,3 +1,4 @@
+from pygments import lex
 import rospy
 import time
 from sensor_msgs.msg import LaserScan
@@ -5,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, FancyArrow, Polygon
 from matplotlib.backend_bases import MouseButton as mb
-from rpw_impl.msg import ObstacleData, ObstacleArray
+from rpw_impl.msg import ObstacleData, ObstacleArray, SIControlOutput
 from geometry_msgs.msg import Point
 from _tkinter import TclError
 
@@ -19,7 +20,7 @@ scan_points = ([],[])
 obstacles = []
 relative_goal = (0.0,0.0) # From controller
 goal_pub = rospy.Publisher("/new_goal", Point, queue_size=10)
-
+control_output = (0.0,0.0) # From controller
 
 class TurtlebotUI:
     def __init__(self,AxisLimits=[-3,3,-2,2]):
@@ -63,6 +64,9 @@ class TurtlebotUI:
         self.dynamic_objects = []
 
     def update_plot(self, plot_obstacles=False):
+        # Single integrator distance from robot body
+        lx = 0.06
+
         # Plot lidar data points
         scatter = self.ax.scatter(scan_points[0],scan_points[1],s=10.0,c="Red")
         self.dynamic_objects.append(scatter)
@@ -81,14 +85,22 @@ class TurtlebotUI:
         # Plot goal
         distance_to_goal = np.linalg.norm(relative_goal)
         if distance_to_goal > 0.1:
-            l = 0.06
-            goal = FancyArrow(l,0,relative_goal[0]-l,relative_goal[1],width=.03, linewidth=0,
+            goal = FancyArrow(lx,0,relative_goal[0]-lx,relative_goal[1],width=.03, linewidth=0,
                                 length_includes_head=True, color="Yellow", alpha=.25, zorder=1)
-            arrow = self.ax.add_patch(goal)
-            self.dynamic_objects.append(arrow)
+            arrow_goal = self.ax.add_patch(goal)
+            self.dynamic_objects.append(arrow_goal)
             self.ax.set_title(f"Distance to goal: {distance_to_goal:.2f} meters", color="gray")
         else:
             self.ax.set_title(" ",color="black")
+
+        # Plot control output
+        if control_output:
+            # Scale QP controller output vector length to same as distance to goal
+            control_output_scaled = distance_to_goal / np.linalg.norm(control_output) * np.array([control_output[0], control_output[1]])
+            control = FancyArrow(lx,0,control_output_scaled[0]-lx,control_output_scaled[1],width=.02, linewidth=0,
+                                length_includes_head=True, color="Green", alpha=.25, zorder=1)
+            arrow_control_output = self.ax.add_patch(control)
+            self.dynamic_objects.append(arrow_control_output)
 
         self.refresh()
 
@@ -123,6 +135,11 @@ def callback_goal(data):
     relative_goal = (data.x, data.y)
 
 
+def callback_control_output(data):
+    global control_output
+    control_output = (data.ux, data.uy)
+
+
 def on_click(event):
     goal = Point()
     if event.inaxes:
@@ -141,7 +158,7 @@ if __name__ == "__main__":
     scan_sub = rospy.Subscriber(TOPIC_PREFIX+"/scan", LaserScan, callback_scan)
     goal_sub = rospy.Subscriber("/relative_goal", Point, callback_goal)
     obstacle_sub = rospy.Subscriber('/obstacles', ObstacleArray, callback_obstacles)
-    
+    control_output_sub = rospy.Subscriber('/control_output', SIControlOutput, callback_control_output)
     ui = TurtlebotUI()
 
     plt.connect('button_press_event', on_click)

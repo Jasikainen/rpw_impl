@@ -3,7 +3,7 @@ import cvxopt
 import numpy as np
 from geometry_msgs.msg import Twist, Point
 from nav_msgs.msg import Odometry
-from rpw_impl.msg import ObstacleData, ObstacleArray
+from rpw_impl.msg import ObstacleData, ObstacleArray, SIControlOutput
 from tf.transformations import euler_from_quaternion
 from enum import Enum
 
@@ -46,11 +46,15 @@ def gamma(h, multiplier, function_type):
 class QpController:
     def __init__(self):
         rospy.init_node('turtlebot_controller')
+
         self.cmd_vel_pub = rospy.Publisher(f'{TOPIC_PREFIX}/cmd_vel', Twist, queue_size=10)
         self.goal_pub = rospy.Publisher('/relative_goal', Point, queue_size=10)
+        self.control_output_pub = rospy.Publisher('/control_output', SIControlOutput, queue_size=10)
+
         self.odom_sub = rospy.Subscriber(f'{TOPIC_PREFIX}/odom', Odometry, self.update_goal)
         self.obj_sub = rospy.Subscriber('/obstacles', ObstacleArray, self.callback)
         self.goal_sub = rospy.Subscriber('/new_goal', Point, self.change_goal)
+
         self.linear_x = 0.0
         self.angular_z = 0.0
         self.goal_index = 0
@@ -125,14 +129,14 @@ class QpController:
         cvxopt.solvers.options['show_progress'] = False
         sol = cvxopt.solvers.qp(Q_mat, c_mat, H_mat, b_mat, verbose=False)
 
-        u = np.array([sol['x'][0], sol['x'][1], 0])
+        u = np.array([sol['x'][0], sol['x'][1]])
         [v, w] = np.array([[u[0]],[u[1]/l]]) # Using the data from the omnidirectional case
-        
         self.linear_x = v[0]
         self.angular_z = w[0]
         #print(f"single integrator ux: {u[0]:>5.2f} uy: {u[1]:>5.2f}")
         #print(f"theta: {np.rad2deg(theta):>5.2f} deg")
         self.pub_twist()
+        self.pub_control_output(u)
 
 
     def pub_twist(self, stop=False):
@@ -153,6 +157,15 @@ class QpController:
             cmd.angular.z = -MAX_ANGULAR_VEL
         #print(f"\n{'Velocity':.^20} \nLinear: {cmd.linear.x:.2f} Angular: {cmd.angular.z:.2f}")
         self.cmd_vel_pub.publish(cmd)
+
+
+    def pub_control_output(self, u):
+        control = SIControlOutput()
+        if len(u) == 2:
+            control.ux = u[0]
+            control.uy = u[1]
+        self.control_output_pub.publish(control)
+
 
 
     def change_goal(self,data):
