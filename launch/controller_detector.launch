@@ -1,0 +1,22 @@
+<launch>
+    <arg 
+        name="topic_namespace"
+        default="$(optenv ROS_NAMESPACE '')"
+    />
+    <include file="$(find turtlebot3_bringup)/launch/turtlebot3_robot.launch">
+    </include>
+    <node
+        pkg="rpw_impl"
+        type="lidar_detection.py"
+        name="lidar_node"
+        args="--namespace $(arg topic_namespace) --disable_output"
+        output="screen"
+    />
+    <node
+        pkg="rpw_impl"
+        type="controller.py"
+        name="turtlebot_controller"
+        args="--namespace $(arg topic_namespace) --disable_output"
+        output="log"
+    />
+</launch>

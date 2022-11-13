@@ -1,5 +1,6 @@
 import rospy
 import cvxopt
+import argparse
 import numpy as np
 from geometry_msgs.msg import Twist, Point
 from nav_msgs.msg import Odometry
@@ -7,7 +8,17 @@ from rpw_impl.msg import ObstacleData, ObstacleArray, SIControlOutput
 from tf.transformations import euler_from_quaternion
 from enum import Enum
 
-TOPIC_PREFIX = ""#"/tb3_1"
+parser = argparse.ArgumentParser()
+parser.add_argument("--namespace",
+            help="prepend all topics with this namespace",
+            default=rospy.get_namespace().rstrip("/"))
+parser.add_argument("--disable_output",
+            action='store_true',
+            help="disables all output")
+args = parser.parse_known_args()
+
+NAMESPACE = args[0].namespace.rstrip("/")
+ENABLE_OUTPUT = not args[0].disable_output
 ERROR_MARGIN = 0.1
 SAFETY_MARGIN = 0.3
 MAX_LINEAR_VEL = 0.21 # 0.22 m/s for Turtlebot3 Burger
@@ -47,13 +58,13 @@ class QpController:
     def __init__(self):
         rospy.init_node('turtlebot_controller')
 
-        self.cmd_vel_pub = rospy.Publisher(f'{TOPIC_PREFIX}/cmd_vel', Twist, queue_size=10)
-        self.goal_pub = rospy.Publisher('/relative_goal', Point, queue_size=10)
-        self.control_output_pub = rospy.Publisher('/control_output', SIControlOutput, queue_size=10)
+        self.cmd_vel_pub = rospy.Publisher(f'{NAMESPACE}/cmd_vel', Twist, queue_size=10)
+        self.goal_pub = rospy.Publisher(f'{NAMESPACE}/relative_goal', Point, queue_size=10)
+        self.control_output_pub = rospy.Publisher(f'{NAMESPACE}/control_output', SIControlOutput, queue_size=10)
 
-        self.odom_sub = rospy.Subscriber(f'{TOPIC_PREFIX}/odom', Odometry, self.update_goal)
-        self.obj_sub = rospy.Subscriber('/obstacles', ObstacleArray, self.callback)
-        self.goal_sub = rospy.Subscriber('/new_goal', Point, self.change_goal)
+        self.odom_sub = rospy.Subscriber(f'{NAMESPACE}/odom', Odometry, self.update_goal)
+        self.obj_sub = rospy.Subscriber(f'{NAMESPACE}/obstacles', ObstacleArray, self.callback)
+        self.goal_sub = rospy.Subscriber(f'{NAMESPACE}/new_goal', Point, self.change_goal)
 
         self.linear_x = 0.0
         self.angular_z = 0.0
@@ -94,7 +105,8 @@ class QpController:
             self.pub_twist(True) # Stop robot
             return
 
-        print(f"\nDistance {error_dist:5.2f} to relative goal (x,y) = ({self.relative_goal[0]:5.2f}, {self.relative_goal[1]:5.2f})", end="")
+        if ENABLE_OUTPUT:
+            print(f"\nDistance {error_dist:5.2f} to relative goal (x,y) = ({self.relative_goal[0]:5.2f}, {self.relative_goal[1]:5.2f})", end="")
 
         v_0 = MAX_LINEAR_VEL
         beta = 3
@@ -185,9 +197,10 @@ class QpController:
             self.goal = tr_2d @ [self.goal[0], self.goal[1], 1]
             self.transform_goal = False
         
-        self.update_counter += 1
-        if self.update_counter % 10 == 0:
-            print(f'  |  /odom {posx:6.2f}, {posy:6.2f}, {np.rad2deg(yaw):7.2f} deg  |  Current goal: {self.goal[0]:6.2f}, {self.goal[1]:6.2f}', end="\r")
+        if ENABLE_OUTPUT:
+            self.update_counter += 1
+            if self.update_counter % 10 == 0:
+                print(f'  |  /odom {posx:6.2f}, {posy:6.2f}, {np.rad2deg(yaw):7.2f} deg  |  Current goal: {self.goal[0]:6.2f}, {self.goal[1]:6.2f}', end="\r")
 
         tr_inv = np.linalg.inv(tr_2d)
             

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import rospy
+import argparse
 from sensor_msgs.msg import LaserScan
 import tf, math
 import numpy as np
@@ -12,52 +13,25 @@ import seaborn as sns
 from collections import Counter
 from rpw_impl.msg import ObstacleData, ObstacleArray
 
-"""
-THIS MAY BE DELETED LATER ON.
+parser = argparse.ArgumentParser()
+parser.add_argument("--namespace",
+            help="prepend all topics with this namespace",
+            default=rospy.get_namespace().rstrip("/"))
+parser.add_argument("--disable_output",
+            action='store_true',
+            help="disables all output")
+args = parser.parse_known_args()
 
-INFORMATION RELATED TO sensor_msgs/LaserScan Message
-
-# Single scan from a planar laser range-finder
-#
-# If you have another ranging device with different behavior (e.g. a sonar
-# array), please find or create a different message, since applications
-# will make fairly laser-specific assumptions about this data
-
-Header header            # timestamp in the header is the acquisition time of 
-                         # the first ray in the scan.
-                         #
-                         # in frame frame_id, angles are measured around 
-                         # the positive Z axis (counterclockwise, if Z is up)
-                         # with zero angle being forward along the x axis
-                         
-float32 angle_min        # start angle of the scan [rad]
-float32 angle_max        # end angle of the scan [rad]
-float32 angle_increment  # angular distance between measurements [rad]
-
-float32 time_increment   # time between measurements [seconds] - if your scanner
-                         # is moving, this will be used in interpolating position
-                         # of 3d points
-float32 scan_time        # time between scans [seconds]
-
-float32 range_min        # minimum range value [m]
-float32 range_max        # maximum range value [m]
-
-float32[] ranges         # range data [m] (Note: values < range_min or > range_max should be discarded)
-float32[] intensities    # intensity data [device-specific units].  If your
-                         # device does not provide intensities, please leave
-                         # the array empty.
-"""
-
-TOPIC_PREFIX = ""#"/tb3_1"
+NAMESPACE = args[0].namespace.rstrip("/")
+ENABLE_OUTPUT = not args[0].disable_output
 SAFE_MARGIN = 0.1
 MAX_RADIUS = 0.5
-PLOT_OBSTACLES = False
 
 # Store here so that they may used after ctrl + C in main
 labels          = 0
 data_points_ext = 0
 objects = {}
-obstacle_pub = rospy.Publisher("/obstacles", ObstacleArray, queue_size=10)
+obstacle_pub = rospy.Publisher(NAMESPACE+"/obstacles", ObstacleArray, queue_size=10)
 
 
 def callback(data):
@@ -92,14 +66,15 @@ def callback(data):
     db = DBSCAN(eps=0.2, min_samples=5).fit(data_points_ext)
     labels = db.labels_ # Non unique values (e.g. all points)
 
-    # Calculate the amount of clusters found excluding noise!
-    n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
-    # How many were labeled as -1 e.g. noise
-    n_noise_ = list(labels).count(-1)
-    print("Clusters found: %d" % n_clusters_)
-    print("Points classified as noise: %d" % n_noise_)
-    if n_clusters_ >= 2:
-        print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels))
+    if ENABLE_OUTPUT:
+        # Calculate the amount of clusters found excluding noise!
+        n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
+        # How many were labeled as -1 e.g. noise
+        n_noise_ = list(labels).count(-1)
+        print("Clusters found: %d" % n_clusters_)
+        print("Points classified as noise: %d" % n_noise_)
+        if n_clusters_ >= 2:
+            print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels))
 
     clusters = points_to_clusters(data_points)
     update_objects(clusters)
@@ -176,12 +151,13 @@ def publish_obstacles():
 
 def detect_incoming_lidar_data(create_plot=False):
     rospy.init_node('lidar_node', anonymous=True)
-    scan = rospy.Subscriber(TOPIC_PREFIX+"/scan", LaserScan, callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
-    rospy.loginfo("Started the node")
+    scan = rospy.Subscriber(NAMESPACE+"/scan", LaserScan, callback) # frame_id: /base_scan as in real tb3 it's tb3_1/base_scan (?)
+    if ENABLE_OUTPUT:
+        rospy.loginfo("Started the node")
 
     if create_plot:
         plot = ObstaclePlot()
-        ani = FuncAnimation(plot.fig, plot.update_plot)#, init_func=plot.plot_init)
+        ani = FuncAnimation(plot.fig, plot.update_plot)
         plt.show(block=True) 
 
     # spin() simply keeps python from exiting until this node is stopped
@@ -221,26 +197,23 @@ class ObstaclePlot:
 
 # Main script is 
 if __name__ == '__main__':
-    detect_incoming_lidar_data(PLOT_OBSTACLES)
-    print(f'program ended by user action: CTRL + C')
+    detect_incoming_lidar_data(ENABLE_OUTPUT)
+    if ENABLE_OUTPUT:
+        # Create scatter plot - note that cluster category -1 == noise
+        plot = sns.scatterplot(data=data_points_ext, x=data_points_ext[:, 0], y=data_points_ext[:, 1], 
+            hue=labels, legend="full", palette="deep")
 
-    print(f"Collections of the found clusters:\n{Counter(labels)}")
+        sns.move_legend(plot, "upper left", bbox_to_anchor=(1.0, 1.0), title='Clusters')
+        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
 
-    # Create scatter plot - note that cluster category -1 == noise
-    plot = sns.scatterplot(data=data_points_ext, x=data_points_ext[:, 0], y=data_points_ext[:, 1], 
-        hue=labels, legend="full", palette="deep")
+        # Display the objects as circles
+        for lbl, object in objects.items():
+            obj = Circle(xy=object[0], radius=object[1], color='red', fill=False, label=lbl)
+            plot.add_patch(obj)
 
-    sns.move_legend(plot, "upper left", bbox_to_anchor=(1.0, 1.0), title='Clusters')
-    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-
-    # Display the objects as circles
-    for lbl, object in objects.items():
-        obj = Circle(xy=object[0], radius=object[1], color='red', fill=False, label=lbl)
-        plot.add_patch(obj)
-
-    plt.title(f"Estimated number of clusters: {n_clusters}")
-    plt.gca().set_aspect('equal')
-    plt.show()
+        plt.title(f"Estimated number of clusters: {n_clusters}")
+        plt.gca().set_aspect('equal')
+        plt.show()
 
     
     plt.show()
