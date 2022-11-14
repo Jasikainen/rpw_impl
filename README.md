@@ -28,13 +28,21 @@ To start off experimenting launch premade gazebo world
 Start Rviz visualizer
 > roslaunch turtlebot3_gazebo turtlebot3_gazebo_rviz.launch
 
-Run from the repository the specific scripts
+Run from the repository the specific script
 > rosrun rpw_impl lidar_detection.py
 
 The controller and the ui nodes can be run similarly
 > rosrun rpw_impl controller.py
 
 > rosrun rpw_impl ui.py
+
+Or to launch all nodes
+> roslaunch rpw_impl ui_and_controller.launch
+
+If you run this from the turtlebot, you should use
+> roslaunch rpw_impl controller_detector.launch
+
+and start the ui separately from the remote pc
 
 ### Add new scripts and/or edit the existing
 

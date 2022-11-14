@@ -1,6 +1,6 @@
-from pygments import lex
 import rospy
 import time
+import argparse
 from sensor_msgs.msg import LaserScan
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,7 +11,13 @@ from geometry_msgs.msg import Point
 from _tkinter import TclError
 
 
-TOPIC_PREFIX = ""#"/tb3_1"
+parser = argparse.ArgumentParser()
+parser.add_argument("--namespace",
+            help="prepend all topics with this namespace",
+            default=rospy.get_namespace().rstrip("/"))
+args = parser.parse_known_args()
+
+NAMESPACE = args[0].namespace.rstrip("/")
 DRAW_ESTIMATED_OBSTACLES = True
 UPDATE_RATE = 0.001
 
@@ -19,7 +25,7 @@ UPDATE_RATE = 0.001
 scan_points = ([],[])
 obstacles = []
 relative_goal = (0.0,0.0) # From controller
-goal_pub = rospy.Publisher("/new_goal", Point, queue_size=10)
+goal_pub = rospy.Publisher(NAMESPACE+"/new_goal", Point, queue_size=10)
 control_output = (0.0,0.0) # From controller
 
 class TurtlebotUI:
@@ -94,7 +100,7 @@ class TurtlebotUI:
             self.ax.set_title(" ",color="black")
 
         # Plot control output
-        if control_output:
+        if control_output[0] != 0.0:
             # Scale QP controller output vector length to same as distance to goal
             control_output_scaled = distance_to_goal / np.linalg.norm(control_output) * np.array([control_output[0], control_output[1]])
             control = FancyArrow(lx,0,control_output_scaled[0]-lx,control_output_scaled[1],width=.02, linewidth=0,
@@ -155,10 +161,10 @@ def on_click(event):
 if __name__ == "__main__":
     rospy.init_node('ui_node')
 
-    scan_sub = rospy.Subscriber(TOPIC_PREFIX+"/scan", LaserScan, callback_scan)
-    goal_sub = rospy.Subscriber("/relative_goal", Point, callback_goal)
-    obstacle_sub = rospy.Subscriber('/obstacles', ObstacleArray, callback_obstacles)
-    control_output_sub = rospy.Subscriber('/control_output', SIControlOutput, callback_control_output)
+    scan_sub = rospy.Subscriber(NAMESPACE+"/scan", LaserScan, callback_scan)
+    goal_sub = rospy.Subscriber(NAMESPACE+"/relative_goal", Point, callback_goal)
+    obstacle_sub = rospy.Subscriber(NAMESPACE+'/obstacles', ObstacleArray, callback_obstacles)
+    control_output_sub = rospy.Subscriber(NAMESPACE+'/control_output', SIControlOutput, callback_control_output)
     ui = TurtlebotUI()
 
     plt.connect('button_press_event', on_click)
@@ -168,5 +174,6 @@ if __name__ == "__main__":
             ui.update_plot(DRAW_ESTIMATED_OBSTACLES)
             time.sleep(UPDATE_RATE)
         except TclError:
+            goal_pub.publish(Point())
             break
     
