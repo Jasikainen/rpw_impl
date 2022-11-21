@@ -12,31 +12,58 @@ from sklearn import metrics
 import seaborn as sns
 from collections import Counter
 from rpw_impl.msg import ObstacleData, ObstacleArray
+from enum import Enum
+
+
+class DetectObstacles(Enum):
+    MULTIPLE_OBSTACLES = 1
+    CLOSEST_LIDAR_POINT = 2
+    CLOSEST_CLUSTER_POINTS = 3
+
+    def __str__(self):
+        return self.name
+
+    @staticmethod
+    def from_string(str):
+        try:
+            return DetectObstacles[str.upper()]
+        except KeyError as error:
+            raise ValueError()
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--namespace",
             help="prepend all topics with this namespace",
             default=rospy.get_namespace().rstrip("/"))
+
 parser.add_argument("--disable_output",
             action='store_true',
             help="disables all output")
-args = parser.parse_known_args()
 
+parser.add_argument("--detect_obstacles",
+            type=DetectObstacles.from_string,
+            choices=list(DetectObstacles),
+            help="choose how obstacles are handled based on LIDAR data")         
+
+args = parser.parse_known_args()
 NAMESPACE = args[0].namespace.rstrip("/")
 ENABLE_OUTPUT = not args[0].disable_output
+OBSTACLE_DETECTION = args[0].detect_obstacles
 SAFE_MARGIN = 0.1
 MAX_RADIUS = 0.5
+DEFAULT_OBJECT_LABEL = 1 # Any positive number
+DEFAULT_OBJECT_RADIUS = 0.05
 
-# Store here so that they may used after ctrl + C in main
-labels          = 0
+# Use as global variables
+labels_ext      = 0
 data_points_ext = 0
-objects = {}
+objects_ext     = {}
 obstacle_pub = rospy.Publisher(NAMESPACE+"/obstacles", ObstacleArray, queue_size=10)
 
 
 def callback(data):
     # Global definitions if these are needed AND changed during execution
-    global labels, data_points_ext
+    global labels_ext, data_points_ext
 
     # Get the values from the data object received
     angle_increment_rad = data.angle_increment
@@ -57,37 +84,58 @@ def callback(data):
         data_points.append([range * math.cos(theta), range * math.sin(theta)])
     data_points_ext = np.asarray(data_points)
 
-    # Currently just for testing purposes using a example from to visualize:
-    # https://scikit-learn.org/stable/auto_examples/cluster/plot_dbscan.html
-    # Minimum distance between points 
+    # No further actions required if zero points detected
     if data_points_ext.size == 0:
         update_objects({})
         return
-    db = DBSCAN(eps=0.2, min_samples=5).fit(data_points_ext)
-    labels = db.labels_ # Non unique values (e.g. all points)
 
-    if ENABLE_OUTPUT:
-        # Calculate the amount of clusters found excluding noise!
-        n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
-        # How many were labeled as -1 e.g. noise
-        n_noise_ = list(labels).count(-1)
-        print("Clusters found: %d" % n_clusters_)
-        print("Points classified as noise: %d" % n_noise_)
-        if n_clusters_ >= 2:
-            print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels))
+    clusters = {}
+    # At least first case does its job here 
+    # To achieve third case requirements, changes most likely done in points_to_clusters(data_points) function just by choosing closest points into the labeled clusters of points
+    if OBSTACLE_DETECTION is DetectObstacles.MULTIPLE_OBSTACLES or OBSTACLE_DETECTION is DetectObstacles.CLOSEST_CLUSTER_POINTS:
+        db = DBSCAN(eps=0.2, min_samples=5).fit(data_points_ext)
+        labels_ext = db.labels_ # Non unique values (e.g. all points)
 
-    clusters = points_to_clusters(data_points)
+        if ENABLE_OUTPUT:
+            # Calculate the amount of clusters found excluding noise!
+            n_clusters_ = len(set(labels_ext)) - (1 if -1 in labels_ext else 0)
+            # How many were labeled as -1 e.g. noise
+            n_noise_ = list(labels_ext).count(-1)
+            print("Clusters found: %d" % n_clusters_)
+            print("Points classified as noise: %d" % n_noise_)
+            if n_clusters_ >= 2:
+                print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels_ext))
+
+        clusters = points_to_clusters(data_points)
+
+    elif OBSTACLE_DETECTION is DetectObstacles.CLOSEST_LIDAR_POINT:
+        # Find the closest point based
+        pnt_distances = np.linalg.norm(data_points_ext, axis=(0,1)) # Issue with axis argument as points are as [[x1,y1], ..., [xN,yN]]
+        print(f"pnt distances {pnt_distances}")
+        closest_pnt_i = np.argmin(pnt_distances)
+        print(f"closest_pnt_i {closest_pnt_i}")
+        closest_pnt = [pnt_distances[0][closest_pnt_i], pnt_distances[1][closest_pnt_i]] # ISSUE HERE DUE TO THE BUG 
+        clusters[DEFAULT_OBJECT_LABEL] = closest_pnt
+
     update_objects(clusters)
 
 
 def points_to_clusters(data_points):
     clusters = {}
-    for pnt, label in zip(data_points,labels):
-        if label in clusters:
-            clusters[label][0].append(pnt[0])
-            clusters[label][1].append(pnt[1])
-        else:
-            clusters[label] = ([pnt[0]],[pnt[1]])
+    if OBSTACLE_DETECTION is DetectObstacles.CLOSEST_CLUSTER_POINTS:
+        print("skip")
+        # TODO
+        # 1. Merge points with same label together, whgat
+        # 2. Find closest point among them
+        # 3. Add it to clusters[label] = closest_point
+
+    elif DetectObstacles.MULTIPLE_OBSTACLES:
+        for pnt, label in zip(data_points,labels_ext):
+            if label in clusters:
+                clusters[label][0].append(pnt[0])
+                clusters[label][1].append(pnt[1])
+            else:
+                clusters[label] = ([pnt[0]],[pnt[1]])
     return clusters
 
 
@@ -118,27 +166,41 @@ def better_estimate_for_large_clusters(cluster, radius):
 
 
 def update_objects(clusters):
-    global objects
-    objects = {}
+    global objects_ext
+    objects_ext = {}
+    
     for label, cluster in clusters.items():
-        if label == -1:
+        if label != -1 and OBSTACLE_DETECTION is DetectObstacles.CLOSEST_LIDAR_POINT:
+            center = {} 
+            radius = 0.0
+
+            if OBSTACLE_DETECTION is DetectObstacles.MULTIPLE_OBSTACLES:
+                center, radius = fit_circle(cluster[0],cluster[1])
+                if radius > MAX_RADIUS: # Temporarily use this to reduce effect of large objects
+                    center = better_estimate_for_large_clusters(cluster, radius)
+            else:
+                # Cluster contains only the closest point, not multiple
+                center, radius = [cluster[0],cluster[1]], DEFAULT_OBJECT_RADIUS
+            
+            center_distance = np.linalg.norm(center)
+            distance_from_turtlebot = center_distance - radius
+            objects_ext[label] = (center, radius, distance_from_turtlebot)
+
+        else:
             pnt_distances = np.linalg.norm(cluster, axis=0)
             closest_pnt_i = np.argmin(pnt_distances)
             closest_pnt = [cluster[0][closest_pnt_i], cluster[1][closest_pnt_i]]
-            objects[label] = (closest_pnt,0.05,pnt_distances[closest_pnt_i],0.05)
-        else:
-            center, radius = fit_circle(cluster[0],cluster[1])
-            if radius > MAX_RADIUS: # Temporarily use this to reduce effect of large objects
-                center = better_estimate_for_large_clusters(cluster, radius)
-            center_distance = np.linalg.norm(center)
-            distance_from_turtlebot = center_distance - radius
-            objects[label] = (center, radius, distance_from_turtlebot)
+            objects_ext[label] = (closest_pnt, DEFAULT_OBJECT_RADIUS, pnt_distances[closest_pnt_i])
+
+            # Only single cluster is found for closest lidar point detection
+            if OBSTACLE_DETECTION is DetectObstacles.CLOSEST_LIDAR_POINT:
+                break
     publish_obstacles()
 
 
 def publish_obstacles():
     obstacles = []
-    for label, obj in objects.items():
+    for label, obj in objects_ext.items():
         obstacle = ObstacleData()
         obstacle.name = str(label)
         obstacle.center = obj[0]
@@ -178,11 +240,11 @@ class ObstaclePlot:
 
 
     def update_plot(self,frame):
-        if len(objects) == 0:
+        if len(objects_ext) == 0:
             return
         self.clear_patches()
 
-        for lbl, object in sorted(objects.items(),key=lambda d: d[1][2]):
+        for lbl, object in sorted(objects_ext.items(),key=lambda d: d[1][2]):
             center = object[0]
             r = object[1]
             # distance = object[2]
@@ -201,13 +263,13 @@ if __name__ == '__main__':
     if ENABLE_OUTPUT:
         # Create scatter plot - note that cluster category -1 == noise
         plot = sns.scatterplot(data=data_points_ext, x=data_points_ext[:, 0], y=data_points_ext[:, 1], 
-            hue=labels, legend="full", palette="deep")
+            hue=labels_ext, legend="full", palette="deep")
 
         sns.move_legend(plot, "upper left", bbox_to_anchor=(1.0, 1.0), title='Clusters')
-        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+        n_clusters = len(set(labels_ext)) - (1 if -1 in labels_ext else 0)
 
         # Display the objects as circles
-        for lbl, object in objects.items():
+        for lbl, object in objects_ext.items():
             obj = Circle(xy=object[0], radius=object[1], color='red', fill=False, label=lbl)
             plot.add_patch(obj)
 
