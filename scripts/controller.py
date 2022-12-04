@@ -77,7 +77,7 @@ class QpController:
         self.obstacle_centers = []
         self.obstacle_radii = []
         self.safety_margin = SAFETY_MARGIN
-        self.gamma_function_type = GammaFunctionType.QUADRATIC
+        self.gamma_function_type = GammaFunctionType.CUBIC
         rospy.spin()
 
 
