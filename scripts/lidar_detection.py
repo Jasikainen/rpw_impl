@@ -47,9 +47,10 @@ parser.add_argument("--detect_obstacles",
 
 args = parser.parse_known_args()
 NAMESPACE = args[0].namespace.rstrip("/")
+
 ENABLE_OUTPUT = not args[0].disable_output
 OBSTACLE_DETECTION = args[0].detect_obstacles
-SAFE_MARGIN = 0.1
+SAFE_MARGIN = 0.3 # Same values as in controller.py
 MAX_RADIUS = 0.5
 DEFAULT_OBJECT_LABEL = 1 # Any positive number
 DEFAULT_OBJECT_RADIUS = 0.05
@@ -89,54 +90,53 @@ def callback(data):
         update_objects({})
         return
 
-    clusters = {}
-    # At least first case does its job here 
-    # To achieve third case requirements, changes most likely done in points_to_clusters(data_points) function just by choosing closest points into the labeled clusters of points
-    if OBSTACLE_DETECTION is DetectObstacles.MULTIPLE_OBSTACLES or OBSTACLE_DETECTION is DetectObstacles.CLOSEST_CLUSTER_POINTS:
-        db = DBSCAN(eps=0.2, min_samples=5).fit(data_points_ext)
-        labels_ext = db.labels_ # Non unique values (e.g. all points)
+    db = DBSCAN(eps=0.2, min_samples=5).fit(data_points_ext)
+    labels_ext = db.labels_ # Non unique values (e.g. all points)
 
-        if ENABLE_OUTPUT:
-            # Calculate the amount of clusters found excluding noise!
-            n_clusters_ = len(set(labels_ext)) - (1 if -1 in labels_ext else 0)
-            # How many were labeled as -1 e.g. noise
-            n_noise_ = list(labels_ext).count(-1)
-            print("Clusters found: %d" % n_clusters_)
-            print("Points classified as noise: %d" % n_noise_)
-            if n_clusters_ >= 2:
-                print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels_ext))
+    if ENABLE_OUTPUT:
+        # Calculate the amount of clusters found excluding noise!
+        n_clusters_ = len(set(labels_ext)) - (1 if -1 in labels_ext else 0)
+        # How many were labeled as -1 e.g. noise
+        n_noise_ = list(labels_ext).count(-1)
+        print("Clusters found: %d" % n_clusters_)
+        print("Points classified as noise: %d" % n_noise_)
+        if n_clusters_ >= 2:
+            print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(data_points_ext, labels_ext))
 
-        clusters = points_to_clusters(data_points)
-
-    elif OBSTACLE_DETECTION is DetectObstacles.CLOSEST_LIDAR_POINT:
-        # Find the closest point based
-        pnt_distances = np.linalg.norm(data_points_ext, axis=(0,1)) # Issue with axis argument as points are as [[x1,y1], ..., [xN,yN]]
-        print(f"pnt distances {pnt_distances}")
-        closest_pnt_i = np.argmin(pnt_distances)
-        print(f"closest_pnt_i {closest_pnt_i}")
-        closest_pnt = [pnt_distances[0][closest_pnt_i], pnt_distances[1][closest_pnt_i]] # ISSUE HERE DUE TO THE BUG 
-        clusters[DEFAULT_OBJECT_LABEL] = closest_pnt
-
+    clusters = points_to_clusters(data_points)
     update_objects(clusters)
 
 
 def points_to_clusters(data_points):
     clusters = {}
-    if OBSTACLE_DETECTION is DetectObstacles.CLOSEST_CLUSTER_POINTS:
-        print("skip")
-        # TODO
-        # 1. Merge points with same label together, whgat
-        # 2. Find closest point among them
-        # 3. Add it to clusters[label] = closest_point
 
-    elif DetectObstacles.MULTIPLE_OBSTACLES:
-        for pnt, label in zip(data_points,labels_ext):
-            if label in clusters:
-                clusters[label][0].append(pnt[0])
-                clusters[label][1].append(pnt[1])
-            else:
-                clusters[label] = ([pnt[0]],[pnt[1]])
-    return clusters
+    if OBSTACLE_DETECTION is DetectObstacles.CLOSEST_LIDAR_POINT:
+        # Computes row vise L2-norm for all of (x,y)-coordinate pairs (LIDAR data)
+        pnt_distances = np.sum(np.abs(data_points)**2,axis=-1)**(1./2)
+        closest_pnt_index = np.argmin(pnt_distances)
+        clusters[DEFAULT_OBJECT_LABEL] = ([data_points[closest_pnt_index][0]],[data_points[closest_pnt_index][1]])
+        return clusters
+
+    # Form clusters based on the labels points have been assigned
+    for pnt, label in zip(data_points,labels_ext):
+        if label in clusters:
+            clusters[label][0].append(pnt[0])
+            clusters[label][1].append(pnt[1])
+        else:
+            clusters[label] = ([pnt[0]],[pnt[1]])
+
+    if OBSTACLE_DETECTION is DetectObstacles.MULTIPLE_OBSTACLES:
+        return clusters
+
+    # Overwrite existing clusters by changing "multiple points per cluster" into a "single closest point per cluster"
+    if OBSTACLE_DETECTION is DetectObstacles.CLOSEST_CLUSTER_POINTS:
+        
+        clusters_overwritten = {}
+        for label, points_in_cluster in clusters.items():
+            pnt_distances = np.linalg.norm(points_in_cluster, axis=0)
+            closest_pnt_index = np.argmin(pnt_distances)
+            clusters_overwritten[label] = ([points_in_cluster[0][closest_pnt_index]],[points_in_cluster[1][closest_pnt_index]])
+        return clusters_overwritten
 
 
 def fit_circle(x, y):  
@@ -170,31 +170,32 @@ def update_objects(clusters):
     objects_ext = {}
     
     for label, cluster in clusters.items():
-        if label != -1 and OBSTACLE_DETECTION is DetectObstacles.CLOSEST_LIDAR_POINT:
-            center = {} 
-            radius = 0.0
+        if OBSTACLE_DETECTION is DetectObstacles.MULTIPLE_OBSTACLES:
+            # From noise choose only the closest point
+            if label == -1:
+                pnt_distances = np.linalg.norm(cluster, axis=0)
+                closest_pnt_i = np.argmin(pnt_distances)
+                closest_pnt = [cluster[0][closest_pnt_i], cluster[1][closest_pnt_i]]
+                objects_ext[label] = (closest_pnt, DEFAULT_OBJECT_RADIUS, pnt_distances[closest_pnt_i]-DEFAULT_OBJECT_RADIUS)
+                continue
 
-            if OBSTACLE_DETECTION is DetectObstacles.MULTIPLE_OBSTACLES:
-                center, radius = fit_circle(cluster[0],cluster[1])
-                if radius > MAX_RADIUS: # Temporarily use this to reduce effect of large objects
-                    center = better_estimate_for_large_clusters(cluster, radius)
-            else:
-                # Cluster contains only the closest point, not multiple
-                center, radius = [cluster[0],cluster[1]], DEFAULT_OBJECT_RADIUS
-            
+            # Estimate a circle based on the points in a cluster
+            center, radius = fit_circle(cluster[0], cluster[1])
+            if radius > MAX_RADIUS:
+                center = better_estimate_for_large_clusters(cluster, radius)
+
             center_distance = np.linalg.norm(center)
             distance_from_turtlebot = center_distance - radius
             objects_ext[label] = (center, radius, distance_from_turtlebot)
 
-        else:
-            pnt_distances = np.linalg.norm(cluster, axis=0)
-            closest_pnt_i = np.argmin(pnt_distances)
-            closest_pnt = [cluster[0][closest_pnt_i], cluster[1][closest_pnt_i]]
-            objects_ext[label] = (closest_pnt, DEFAULT_OBJECT_RADIUS, pnt_distances[closest_pnt_i])
-
-            # Only single cluster is found for closest lidar point detection
+        elif OBSTACLE_DETECTION is DetectObstacles.CLOSEST_LIDAR_POINT or OBSTACLE_DETECTION is DetectObstacles.CLOSEST_CLUSTER_POINTS:
+            closest_point = [cluster[0][0], cluster[1][0]] # Second index 0 as single point should be within a cluster
+            objects_ext[label] = (closest_point, DEFAULT_OBJECT_RADIUS, np.linalg.norm(cluster, axis=0)-DEFAULT_OBJECT_RADIUS)
+            
+            # Since only a one cluster should be found for "single datapoint obstacle detection" we can stop here
             if OBSTACLE_DETECTION is DetectObstacles.CLOSEST_LIDAR_POINT:
                 break
+
     publish_obstacles()
 
 
