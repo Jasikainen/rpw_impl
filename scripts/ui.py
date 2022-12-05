@@ -20,7 +20,7 @@ args = parser.parse_known_args()
 NAMESPACE = args[0].namespace.rstrip("/")
 DRAW_ESTIMATED_OBSTACLES = True
 UPDATE_RATE = 0.001
-
+SAFETY_MARGIN = 0.3
 # Globals
 scan_points = ([],[])
 obstacles = []
@@ -80,14 +80,15 @@ class TurtlebotUI:
         # Plot estimated obstacles
         if plot_obstacles:
             for obstacle in obstacles:
-                circle = Circle(xy=obstacle.center, radius=obstacle.radius, color="Red",fill=True,alpha=0.1, zorder=0)
+                circle = Circle(xy=obstacle.center, radius=obstacle.radius, color="Green",fill=True,alpha=0.3, zorder=0)
+                circle_with_margin = Circle(xy=obstacle.center, radius=obstacle.radius + SAFETY_MARGIN, color="Green",fill=False, alpha=0.1, zorder=0)
                 if obstacle.name == "-1":
                     # Closest point from the "noise" cluster
                     circle.set_color("yellow")
                     circle.set_alpha(.4)
-                obj = self.ax.add_patch(circle)
-                self.dynamic_objects.append(obj)
-
+                self.dynamic_objects.append(self.ax.add_patch(circle))
+                self.dynamic_objects.append(self.ax.add_patch(circle_with_margin))
+                
         # Plot goal
         distance_to_goal = np.linalg.norm(relative_goal)
         if distance_to_goal > 0.1:

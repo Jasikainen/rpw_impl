@@ -15,6 +15,7 @@ parser.add_argument("--namespace",
 parser.add_argument("--disable_output",
             action='store_true',
             help="disables all output")
+            
 args = parser.parse_known_args()
 
 NAMESPACE = args[0].namespace.rstrip("/")
@@ -76,7 +77,7 @@ class QpController:
         self.obstacle_centers = []
         self.obstacle_radii = []
         self.safety_margin = SAFETY_MARGIN
-        self.gamma_function_type = GammaFunctionType.QUADRATIC
+        self.gamma_function_type = GammaFunctionType.CUBIC
         rospy.spin()
 
 

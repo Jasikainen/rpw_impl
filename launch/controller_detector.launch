@@ -3,13 +3,19 @@
         name="topic_namespace"
         default="$(optenv ROS_NAMESPACE '')"
     />
+    <arg 
+        name="obstacle_detection"
+        default="MULTIPLE_OBSTACLES"
+        doc="detection type [MULTIPLE_OBSTACLES, CLOSEST_LIDAR_POINT, CLOSEST_CLUSTER_POINTS]"
+    />
+
     <include file="$(find turtlebot3_bringup)/launch/turtlebot3_robot.launch">
     </include>
     <node
         pkg="rpw_impl"
         type="lidar_detection.py"
         name="lidar_node"
-        args="--namespace $(arg topic_namespace) --disable_output"
+        args="--namespace $(arg topic_namespace) --disable_output --detect_obstacles $(arg obstacle_detection)"
         output="screen"
     />
     <node
