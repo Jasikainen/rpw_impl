@@ -11,7 +11,7 @@ Clone the folder
 
 ## Next step is to do the following
 
-Running catkin_make is needed here after getting the repository
+Running catkin_make is needed here after cloning the repository
 > cd ~/catkin_ws/
 
 > catkin_make
@@ -20,29 +20,16 @@ Running catkin_make is needed here after getting the repository
 Install the ´scikit-learn´
 > pip3 install -U scikit-learn
 
-### How to perform scripts specified
-Run for example script from "scripts/lidar_detection.py" to start the LIDAR node
-
-First do the following to start turtlebot3 simulation
+### How to run the solution
+First do the following to start Turtlebot3 Burger simulation
 > export TURTLEBOT3_MODEL=burger
 
 To start off experimenting launch premade gazebo world 
 > roslaunch turtlebot3_gazebo turtlebot3_world.launch
 
-Start Rviz visualizer
-> roslaunch turtlebot3_gazebo turtlebot3_gazebo_rviz.launch
-
-Run from the repository the specific script
-> rosrun rpw_impl lidar_detection.py
-
-The controller and the ui nodes can be run similarly
-> rosrun rpw_impl controller.py
-
-> rosrun rpw_impl ui.py
-
 #### Using .launch files
 
-##### Launch all nodes
+##### Launch all nodes (e.g. using Gazebo simulation)
 > roslaunch rpw_impl ui_and_controller.launch
 
 ##### If you run this from the turtlebot, you should use
@@ -51,7 +38,7 @@ The controller and the ui nodes can be run similarly
 and start the ui separately from the remote pc
 
 ##### Launching with optional arguments
-Obstacle detection supports three different types of actions. All of them include location (x,y) of the detected obstacle and it's radius. All of algorithms, but the **first**,  use default radius ```r``` for the detected obstacles. First algorithm evaluates the radius based on the points within the cluster.
+Obstacle detection supports three different types of actions. All of them include location (x,y) of the detected obstacle and it's radius. All of the algorithms, but the **first**,  use default radius ```r``` for the detected obstacles. First algorithm evaluates the radius based on the points within the cluster.
 
 - ```obstactle_detection``` (e.g. How obstacles are fed to controller)
   - MULTIPLE_OBSTACLES: LIDAR points converted into clusters that are fed to controller as multiple obstacles
@@ -72,6 +59,21 @@ Values are given without ```<``` and ```>``` in the following
 ```sh
 > roslaunch rpw_imp controller.launch topic_namespace:=<name_of_namespace> obstactle_detection:=<MULTIPLE_OBSTACLES or CLOSEST_LIDAR_POINT or CLOSEST_CLUSTER_POINTS>
 ```
+
+## Alternative ways to be used instead of launch
+
+NOTE: The following procedure has not been tested to be working in version as of date 30.1.2023 thus using launch files is preferred
+
+Start Rviz visualizer (to display LIDAR data)
+> roslaunch turtlebot3_gazebo turtlebot3_gazebo_rviz.launch
+
+Run from the repository the specific script
+> rosrun rpw_impl lidar_detection.py
+
+The controller and the ui nodes can be run similarly
+> rosrun rpw_impl controller.py
+
+> rosrun rpw_impl ui.py
 
 ### Add new scripts and/or edit the existing
 
