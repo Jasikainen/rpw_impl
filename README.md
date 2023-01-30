@@ -16,6 +16,10 @@ Running catkin_make is needed here after getting the repository
 
 > catkin_make
 
+### Installing required packages
+Install the ´scikit-learn´
+> pip3 install -U scikit-learn
+
 ### How to perform scripts specified
 Run for example script from "scripts/lidar_detection.py" to start the LIDAR node
 
